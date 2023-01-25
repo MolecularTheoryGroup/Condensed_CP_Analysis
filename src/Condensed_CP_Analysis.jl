@@ -7,8 +7,11 @@ import NLsolve
 import Parsers
 import Interact
 import Plots
+import WGLMakie as Mke
 
 using Interact
+using Meshes, MeshViz
+
 
 function set_str_to_int_array(set_str)
     out = []
@@ -152,6 +155,17 @@ function import_dat(fname)
             end
         end
 
+        # save matrix of xyz values for convenience
+        nodes = Array{Float32}(undef, zone["NUMPOINTS"], 3)
+        for (idir,dir) in enumerate(["X", "Y", "Z"])
+            vals = zone["variables"][dir]
+            for i in 1:zone["NUMPOINTS"]
+                nodes[i, idir] = vals[i]
+            end
+        end
+        zone["nodes_xyz"] = nodes
+
+
         # get Elements
         if zone["ZONETYPE"] == "FETriangle"
             elements = Array{Int32}(undef, zone["Elements"], 3)
@@ -162,18 +176,14 @@ function import_dat(fname)
                 line = readline(f)
             end
             zone["element_list"] = elements
-        end
 
-        # save matrix of xyz values for convenience
-        nodes = Array{Float32}(undef, zone["NUMPOINTS"], 3)
-        for (idir,dir) in enumerate(["X", "Y", "Z"])
-            vals = zone["variables"][dir]
-            for i in 1:zone["NUMPOINTS"]
-                nodes[i, idir] = vals[i]
-            end
-        end
+            # make mesh
 
-        zone["nodes_xyz"] = nodes
+            points = Point3[nodes[i,:] for i in 1:size(nodes,1)]
+            tris = connect.([Tuple(elements[i,:]) for i in 1:size(elements,1)], Triangle)
+            mesh = SimpleMesh(points, tris)
+            zone["mesh"] = mesh
+        end
         
         out["zones"][zone["T"]] = zone
     end
