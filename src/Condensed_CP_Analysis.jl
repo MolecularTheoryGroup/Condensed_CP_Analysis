@@ -1,17 +1,18 @@
 module Condensed_CP_Analysis
 
-import Interpolations
-import LinearAlgebra
+import Interpolations: scale, interpolate, BSpline, Linear, Quadratic, Cubic, Flat, Periodic, OnGrid, gradient, hessian, Gridded
+import LinearAlgebra: dot, cross, normalize, norm
 import LoggingExtras, LoggingFormats
 import NLsolve
 import Parsers
 import Interact
-import Plots
-import WGLMakie as Mke
-
-using Interact
+import Plots: plot, plot!, scatter, scatter!
+import Roots: find_zeros, Newton
+using StaticArrays
 using Meshes, MeshViz
-
+import GLMakie as Mke
+import SplitApplyCombine: invert
+import NaNStatistics: movmean
 
 function set_str_to_int_array(set_str)
     out = []
@@ -65,7 +66,11 @@ function import_dat(fname)
     # now get all the zones
     out["zones"] = Dict()
 
-    while startswith(line, "ZONE") && !eof(f)
+    while !eof(f)
+        if !startswith(line, "ZONE")
+            line = readline(f)
+            continue
+        end
         # get zone header
         line = replace(line, "ZONE " => "")
         zone = Dict()
@@ -156,15 +161,7 @@ function import_dat(fname)
         end
 
         # save matrix of xyz values for convenience
-        nodes = Array{Float32}(undef, zone["NUMPOINTS"], 3)
-        for (idir,dir) in enumerate(["X", "Y", "Z"])
-            vals = zone["variables"][dir]
-            for i in 1:zone["NUMPOINTS"]
-                nodes[i, idir] = vals[i]
-            end
-        end
-        zone["nodes_xyz"] = nodes
-
+        zone["nodes_xyz"] = invert([zone["variables"][dir] for dir in ["X","Y","Z"]])
 
         # get Elements
         if zone["ZONETYPE"] == "FETriangle"
@@ -178,8 +175,7 @@ function import_dat(fname)
             zone["element_list"] = elements
 
             # make mesh
-
-            points = Point3[nodes[i,:] for i in 1:size(nodes,1)]
+            points = Point.(zone["variables"]["X"], zone["variables"]["Y"], zone["variables"]["Z"])
             tris = connect.([Tuple(elements[i,:]) for i in 1:size(elements,1)], Triangle)
             mesh = SimpleMesh(points, tris)
             zone["mesh"] = mesh
@@ -192,9 +188,85 @@ function import_dat(fname)
     return out
 end
 
-function data_explorer(sys)
-    @manipulate for zone = collect(keys(sys["zones"]))
-        zone
+# angle difference of vectors in plane given plan normal n
+# (from https://stackoverflow.com/a/33920320/2620767)
+angle(a, b, n) = atan((a×b)⋅n, a⋅b)
+
+function sphere_slice_zone_point_theta(zone, zero_theta_vec)
+    θ0 = zero_theta_vec
+    origin = [(minimum(zone["variables"][dir]) + maximum(zone["variables"][dir])) / 2 for dir in ["X","Y","Z"]]
+    points = zone["nodes_xyz"]
+    norm_vec = normalize(cross(points[1] - origin, points[div(end,3)] - origin))
+    return [angle(normalize(points[i] - origin), θ0, norm_vec) for i in eachindex(points)], origin, norm_vec
+end
+
+function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1)
+    sys = import_dat(file_path)
+    @info "Processing file $(sys["title"])"
+    for (zk, zv) in sys["zones"]
+        if zv["ZONETYPE"] ≠ "Ordered" || zv["I"] == 1 || zv["J"] > 1 || zv["K"] > 1
+            continue
+        end
+        @info "Processing zone $zk"
+
+        θ, origin, norm_vec = sphere_slice_zone_point_theta(zv, zero_theta_vec)
+        ignore_ind = Set{Int}([i for i in eachindex(θ) if θ[i] == θ[mod1(i+1,end)]])
+        @debug "Ignoring duplicate point indices" sort(collect(ignore_ind)) θ
+
+        ind = [i for i in eachindex(θ) if i ∉ ignore_ind]
+        θ = θ[ind]
+        order = sortperm(θ)
+        θ = θ[order]
+        θreg = θ[1] : 2π/length(θ) : θ[end]
+
+        # need to get XYZ values of CPs found in the θ space
+        xyz_of_theta = []
+        for vk in ["X","Y","Z"]
+            vv = zv["variables"][vk]
+            itp_gridded = interpolate((θ,), vv[order], Gridded(Linear()))
+            v = [itp_gridded[th] for th in θreg]
+            itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
+            push!(xyz_of_theta, itp_cubic)
+        end
+
+        for (vk, vv) in zv["variables"]
+            if !occursin("INS: Electron", vk)
+                continue
+            end
+
+            @info "Processing variable $vk"
+
+            # first interpolate to regular grid, then use higher order interpolation for derivatives
+            itp_gridded = interpolate((θ,), vv[order], Gridded(Linear()))
+            # function values on regular grid
+            v = [itp_gridded[th] for th in θreg]
+            # quadratic and cubic interpolators using the interpolated grid values
+            itp_quadratic = scale(interpolate(v, BSpline(Quadratic(Flat(OnGrid())))), θreg)
+            itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
+            # print some values and compare the interpolation error
+            for i in 5:length(θ)÷3:length(θ)-5
+                θmid = (θ[i] + θ[mod1(i+1, end)]) / 2
+                gridded = itp_gridded(θ[i])
+                quad = itp_quadratic(θ[i])
+                quad_error = quad - vv[order][i]
+                cub = itp_cubic(θ[i])
+                cub_error = cub - vv[order][i]
+                @debug "Test interp for f($(θ[i])) = $(vv[order][i])" gridded quad quad_error cub cub_error itp_gridded(θmid) itp_quadratic(θmid) itp_cubic(θmid)
+            end
+
+            itp = itp_quadratic
+            # now find roots using quadratic or cubic interpolation
+            f(x) = gradient(itp, x)[1]
+            g(x) = hessian(itp, x)[1]
+            @info "test grad hess" f(0) g(0)
+            cub_zeros = find_zeros(f, -3, 3)
+            @info "Zeros" cub_zeros
+
+            p = plot(θreg, [itp.(θreg), movmean(itp.(θreg), max(1,smoothing_factor))], title=zk, label=[vk "moving average n=$smoothing_factor"])
+            return p
+            break
+        end
+        break
     end
 end
 
