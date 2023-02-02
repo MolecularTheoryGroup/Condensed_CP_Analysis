@@ -4,10 +4,15 @@ authors = ["Tim Wilson <twilsonco@gmail.com> and contributors"]
 version = "0.1.0"
 
 [deps]
+Assignment = "30268ba6-d258-4c5c-9bcf-b5809bbf81b5"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 Interact = "c601a237-2ae4-5e1e-952c-7a85b0c7eef1"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 JSServe = "824d6782-a2ef-11e9-3a09-e5662e0c26f9"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 LoggingFormats = "98105f81-4425-4516-93fd-1664fb551ab6"

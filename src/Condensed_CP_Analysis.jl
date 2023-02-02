@@ -6,13 +6,18 @@ import LoggingExtras, LoggingFormats
 import NLsolve
 import Parsers
 import Interact
-import Plots: plot, plot!, scatter, scatter!
 import Roots: find_zeros, Newton
 using StaticArrays
 using Meshes, MeshViz
 import GLMakie as Mke
-import SplitApplyCombine: invert
+import SplitApplyCombine: invert, flatten
 import NaNStatistics: movmean
+using Plots
+using LaTeXStrings
+using Assignment
+import CSV: CSV
+import DataFrames: DataFrame
+using ImageFiltering
 
 function set_str_to_int_array(set_str)
     out = []
@@ -192,6 +197,32 @@ end
 # (from https://stackoverflow.com/a/33920320/2620767)
 angle(a, b, n) = atan((a×b)⋅n, a⋅b)
 
+function pitick(start, stop, denom; mode=:text)
+    a = Int(cld(start, π/denom))
+    b = Int(fld(stop, π/denom))
+    tick = range(a*π/denom, b*π/denom; step=π/denom)
+    ticklabel = piticklabel.((a:b) .// denom, Val(mode))
+    tick, ticklabel
+end
+
+function piticklabel(x::Rational, ::Val{:text})
+    iszero(x) && return "0"
+    S = x < 0 ? "-" : ""
+    n, d = abs(numerator(x)), denominator(x)
+    N = n == 1 ? "" : repr(n)
+    d == 1 && return S * N * "π"
+    S * N * "π/" * repr(d)
+end
+
+function piticklabel(x::Rational, ::Val{:latex})
+    iszero(x) && return L"0"
+    S = x < 0 ? "-" : ""
+    n, d = abs(numerator(x)), denominator(x)
+    N = n == 1 ? "" : repr(n)
+    d == 1 && return L"%$S%$N\pi"
+    L"%$S\frac{%$N\pi}{%$d}"
+end
+
 function sphere_slice_zone_point_theta(zone, zero_theta_vec)
     θ0 = zero_theta_vec
     origin = [(minimum(zone["variables"][dir]) + maximum(zone["variables"][dir])) / 2 for dir in ["X","Y","Z"]]
@@ -200,9 +231,10 @@ function sphere_slice_zone_point_theta(zone, zero_theta_vec)
     return [angle(normalize(points[i] - origin), θ0, norm_vec) for i in eachindex(points)], origin, norm_vec
 end
 
-function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1)
+function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, var_check_str="INS: ")
     sys = import_dat(file_path)
     @info "Processing file $(sys["title"])"
+
     for (zk, zv) in sys["zones"]
         if zv["ZONETYPE"] ≠ "Ordered" || zv["I"] == 1 || zv["J"] > 1 || zv["K"] > 1
             continue
@@ -228,21 +260,31 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1)
             itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
             push!(xyz_of_theta, itp_cubic)
         end
+        var_cp_data = Dict()
 
         for (vk, vv) in zv["variables"]
-            if !occursin("INS: Electron", vk)
+            if !occursin(var_check_str, vk)
                 continue
             end
 
             @info "Processing variable $vk"
 
+            vk_short = replace(vk, var_check_str => "")
+
+            var_cp_data[vk_short] = Dict()
+
             # first interpolate to regular grid, then use higher order interpolation for derivatives
             itp_gridded = interpolate((θ,), vv[order], Gridded(Linear()))
+            # itp_k_gridded = interpolate((θ,), movmean(vv[order], max(1, smoothing_factor)), Gridded(Linear()))
+            itp_k_gridded = interpolate((θ,), imfilter(vv[order], ImageFiltering.Kernel.gaussian((max(0,smoothing_factor),))), Gridded(Linear()))
             # function values on regular grid
             v = [itp_gridded[th] for th in θreg]
+            v_k = [itp_k_gridded[th] for th in θreg]
             # quadratic and cubic interpolators using the interpolated grid values
             itp_quadratic = scale(interpolate(v, BSpline(Quadratic(Flat(OnGrid())))), θreg)
             itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
+            itp_k_quadratic = scale(interpolate(v_k, BSpline(Quadratic(Flat(OnGrid())))), θreg)
+            itp_k_cubic = scale(interpolate(v_k, BSpline(Cubic(Flat(OnGrid())))), θreg)
             # print some values and compare the interpolation error
             for i in 5:length(θ)÷3:length(θ)-5
                 θmid = (θ[i] + θ[mod1(i+1, end)]) / 2
@@ -255,19 +297,148 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1)
             end
 
             itp = itp_quadratic
+            itp_k = itp_k_quadratic
             # now find roots using quadratic or cubic interpolation
             f(x) = gradient(itp, x)[1]
             g(x) = hessian(itp, x)[1]
-            @info "test grad hess" f(0) g(0)
-            cub_zeros = find_zeros(f, -3, 3)
-            @info "Zeros" cub_zeros
+            f_k(x) = gradient(itp_k, x)[1]
+            g_k(x) = hessian(itp_k, x)[1]
+            @debug "test grad hess" f(0) f_k(0) g(0) g_k(0)
+            cps = find_zeros(f_k, -3.1, 3.1)
+            @debug "Zeros" cps
 
-            p = plot(θreg, [itp.(θreg), movmean(itp.(θreg), max(1,smoothing_factor))], title=zk, label=[vk "moving average n=$smoothing_factor"])
-            return p
-            break
+            # save CP data and derivative values
+            cp_info = []
+            for (ri, r) in enumerate(cps)
+                cp = Dict([
+                    "#" => ri,
+                    "variable" => vk,
+                    "plane" => zk,
+                    "angle from [$(join(zero_theta_vec, " "))]" => r,
+                    "x" => xyz_of_theta[1](r),
+                    "y" => xyz_of_theta[2](r),
+                    "z" => xyz_of_theta[3](r),
+                    "f(xyz)" => itp(r),
+                    "df/dtheta" => f_k(r),
+                    "d2f/dtheta²" => g_k(r)   
+                ])
+                push!(cp_info, cp)
+            end
+            var_cp_data[vk_short]["cp_info"] = cp_info
+
+            # make plot of function and CPs
+            p = plot(θreg, [itp.(θreg), itp_k.(θreg)], title="$(sys["title"]) $zk", label=["raw" "gaussian smoothing n=$smoothing_factor"], xtick=pitick(-π,π,4; mode=:latex))
+            scatter!(p, cps, itp_k.(cps),label="CPs", mc=:cyan, ms=5, ma=0.8)
+            for (ri,r) in enumerate(cps)
+                annotate!(r, itp_k.(r), text(ri, :blue, 4))
+            end
+            plot!(legend=:outerbottom, legendcolumns=3)
+            xlabel!(p, "θ")
+            ylabel!(p, vk)
+
+            var_cp_data[vk_short]["plot"] = p
         end
-        break
+        sys["zones"][zk]["condensed_cp_info"] = var_cp_data
     end
+
+    # Now we have all the CPs for all the INS variables of all the zones.
+    # Next to match CPs across the zones by solving the linear sum assignment problem across zones pairwise
+    var_cp_info = Dict()
+    zones = [zk for (zk, zv) in sys["zones"] if "condensed_cp_info" ∈ keys(zv)]
+    for vk in keys(sys["zones"][zones[1]]["condensed_cp_info"])
+        @debug "Matching CPs for variable: $vk"
+        cp_info = []
+        for (i,zk1) in enumerate(zones[2:end])
+            r1 = [[cp[v] for v in ["x","y","z"]] for cp in sys["zones"][zk1]["condensed_cp_info"][vk]["cp_info"]]
+            for j in 1:i
+                @debug "Matching CPs between zones $zk1 and $(zones[j])"
+                r2 = [[cp[v] for v in ["x","y","z"]] for cp in sys["zones"][zones[j]]["condensed_cp_info"][vk]["cp_info"]]
+                costs = [norm(ri - rj) for ri in r1, rj in r2]
+                sol = find_best_assignment(costs)
+                if length(sol.row4col) > length(sol.col4row)
+                    costs = [costs[sol.col4row[i], i] for i in eachindex(sol.col4row)]
+                    cost_order = partialsortperm(costs, 1:2)
+                    @debug "closest two CP distances between zones" costs[cost_order]
+                    for cj in cost_order
+                        push!(cp_info, Dict(
+                            zk1 => sys["zones"][zk1]["condensed_cp_info"][vk]["cp_info"][sol.col4row[cj]],
+                            zones[j] => sys["zones"][zones[j]]["condensed_cp_info"][vk]["cp_info"][cj],
+                            "distance" => costs[cj]
+                        ))
+                    end
+                else
+                    costs = [costs[i, sol.row4col[i]] for i in eachindex(sol.row4col)]
+                    cost_order = partialsortperm(costs, 1:2)
+                    @debug "closest two CP distances between zones" costs[cost_order]
+                    for cj in cost_order
+                        push!(cp_info, Dict(
+                            zk1 => sys["zones"][zk1]["condensed_cp_info"][vk]["cp_info"][cj],
+                            zones[j] => sys["zones"][zones[j]]["condensed_cp_info"][vk]["cp_info"][sol.row4col[cj]],
+                            "distance" => costs[cj]
+                        ))
+                    end
+                end
+            end 
+        end
+        var_cp_info[vk] = cp_info
+    end
+    sys["condensed_cp_info"] = var_cp_info
+
+    # Now CPs are matched between zones. Just need to print out all the data and plots.
+    base_dir = dirname(file_path)
+    out_dir = "$base_dir/out"
+    mkpath(out_dir)
+    cd(out_dir)
+
+    # First CPs matched between different zones. 
+    cp_info = Dict(["# matched" => [], "distance" => []])
+    for zone_pair_cps in values(sys["condensed_cp_info"])
+        cp_num = 1
+        for zone_pair in zone_pair_cps
+            for (zk,cp) in zone_pair
+                if zk == "distance"
+                    continue
+                end
+                push!(cp_info["distance"], zone_pair["distance"])
+                push!(cp_info["# matched"], cp_num)
+                for (var_name,value) in cp
+                    if var_name in keys(cp_info)
+                        push!(cp_info[var_name], value)
+                    else
+                        cp_info[var_name] = [value]
+                    end
+                end
+            end
+            cp_num += 1
+        end
+    end
+    df = DataFrame(cp_info)
+    sys["condensed_cp_dataframe_ktched"] = df
+    CSV.write("$(sys["title"]) matched CPs smoothing n=$smoothing_factor.csv",df)
+
+    # now all cps for each zone, and plots
+    cp_info = Dict()
+    for (zk,zv) in sys["zones"]
+        if "condensed_cp_info" in keys(zv)
+            for (vk, vv) in zv["condensed_cp_info"]
+                for cp in vv["cp_info"]
+                    for (var_name,value) in cp
+                        if var_name in keys(cp_info)
+                            push!(cp_info[var_name], value)
+                        else
+                            cp_info[var_name] = [value]
+                        end
+                    end
+                end
+                savefig(vv["plot"], "$(sys["title"]) condensed CPs zone $zk var $vk smoothing n=$smoothing_factor.pdf")
+            end
+        end
+    end
+    df = DataFrame(cp_info)
+    sys["condensed_cp_dataframe_all"] = df
+    CSV.write("$(sys["title"]) CPs smoothing n=$smoothing_factor.csv",df)
+
+    return sys
 end
 
 end
