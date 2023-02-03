@@ -223,25 +223,25 @@ function piticklabel(x::Rational, ::Val{:latex})
     L"%$S\frac{%$N\pi}{%$d}"
 end
 
-function sphere_slice_zone_point_theta(zone, zero_theta_vec)
-    θ0 = zero_theta_vec
+function sphere_slice_zone_point_theta(zone)
     origin = [(minimum(zone["variables"][dir]) + maximum(zone["variables"][dir])) / 2 for dir in ["X","Y","Z"]]
     points = zone["nodes_xyz"]
+    θ0 = normalize(points[1] - origin) # use first point to define the zero theta
     norm_vec = normalize(cross(points[1] - origin, points[div(end,3)] - origin))
     return [angle(normalize(points[i] - origin), θ0, norm_vec) for i in eachindex(points)], origin, norm_vec
 end
 
-function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, var_check_str="INS: ")
+function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS: ", spacing=π/100)
     sys = import_dat(file_path)
     @info "Processing file $(sys["title"])"
-
+    smoothing_str = (smoothing_factor > 0 ? " smoothing n=$smoothing_factor" : "")
     for (zk, zv) in sys["zones"]
         if zv["ZONETYPE"] ≠ "Ordered" || zv["I"] == 1 || zv["J"] > 1 || zv["K"] > 1
             continue
         end
         @info "Processing zone $zk"
 
-        θ, origin, norm_vec = sphere_slice_zone_point_theta(zv, zero_theta_vec)
+        θ, origin, norm_vec = sphere_slice_zone_point_theta(zv)
         ignore_ind = Set{Int}([i for i in eachindex(θ) if θ[i] == θ[mod1(i+1,end)]])
         @debug "Ignoring duplicate point indices" sort(collect(ignore_ind)) θ
 
@@ -249,7 +249,9 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, va
         θ = θ[ind]
         order = sortperm(θ)
         θ = θ[order]
-        θreg = θ[1] : 2π/length(θ) : θ[end]
+        θreg = θ[1] : spacing : θ[end]
+        plot_spacing = π/500
+        θreg_plot = θ[1]+9plot_spacing : π/500 : θ[end]-9plot_spacing
 
         # need to get XYZ values of CPs found in the θ space
         xyz_of_theta = []
@@ -261,6 +263,10 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, va
             push!(xyz_of_theta, itp_cubic)
         end
         var_cp_data = Dict()
+        var_itp = Dict()
+        var_itp_k = Dict()
+        var_itp_g = Dict()
+        var_itp_h = Dict()
 
         for (vk, vv) in zv["variables"]
             if !occursin(var_check_str, vk)
@@ -298,13 +304,17 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, va
 
             itp = itp_quadratic
             itp_k = itp_k_quadratic
+            var_itp[vk] = itp
+            var_itp_k[vk] = itp_k
             # now find roots using quadratic or cubic interpolation
             f(x) = gradient(itp, x)[1]
             g(x) = hessian(itp, x)[1]
             f_k(x) = gradient(itp_k, x)[1]
             g_k(x) = hessian(itp_k, x)[1]
+            var_itp_g[vk] = f_k
+            var_itp_h[vk] = g_k
             @debug "test grad hess" f(0) f_k(0) g(0) g_k(0)
-            cps = find_zeros(f_k, -3.1, 3.1)
+            cps = find_zeros(f_k, -3, 3)
             @debug "Zeros" cps
 
             # save CP data and derivative values
@@ -314,31 +324,61 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, va
                     "#" => ri,
                     "variable" => vk,
                     "plane" => zk,
-                    "angle from [$(join(zero_theta_vec, " "))]" => r,
+                    "theta" => r,
                     "x" => xyz_of_theta[1](r),
                     "y" => xyz_of_theta[2](r),
                     "z" => xyz_of_theta[3](r),
                     "f(xyz)" => itp(r),
                     "df/dtheta" => f_k(r),
-                    "d2f/dtheta²" => g_k(r)   
+                    "d2f/dtheta2" => g_k(r)   
                 ])
                 push!(cp_info, cp)
             end
             var_cp_data[vk_short]["cp_info"] = cp_info
 
             # make plot of function and CPs
-            p = plot(θreg, [itp.(θreg), itp_k.(θreg)], title="$(sys["title"]) $zk", label=["raw" "gaussian smoothing n=$smoothing_factor"], xtick=pitick(-π,π,4; mode=:latex))
-            scatter!(p, cps, itp_k.(cps),label="CPs", mc=:cyan, ms=5, ma=0.8)
+            if smoothing_factor > 0
+                p = plot(θreg_plot, [itp.(θreg_plot), itp_k.(θreg_plot)], title="$(sys["title"]) $zk", label=["raw" "gaussian$smoothing_str"], xtick=pitick(-π,π,4; mode=:latex))
+                plot!(legend=:outerbottom, legendcolumns=3)
+            else
+                p = plot(θreg_plot, itp.(θreg_plot), title="$(sys["title"]) $zk", xtick=pitick(-π,π,4; mode=:latex))
+                plot!(legend=:outerbottom, legendcolumns=2)
+            end
+            scatter!(p, cps, itp_k.(cps),label="CPs", mc=:cyan, ms=5, ma=0.4)
             for (ri,r) in enumerate(cps)
                 annotate!(r, itp_k.(r), text(ri, :blue, 4))
             end
-            plot!(legend=:outerbottom, legendcolumns=3)
             xlabel!(p, "θ")
             ylabel!(p, vk)
 
-            var_cp_data[vk_short]["plot"] = p
+            var_cp_data[vk_short]["plot_f"] = p
+
+            # and grad and hess
+            p = plot(θreg_plot, f_k.(θreg_plot), title="$(sys["title"]) $zk ∂/∂θ", xtick=pitick(-π,π,4; mode=:latex))
+            scatter!(p, cps, f_k.(cps),label="CPs", mc=:cyan, ms=5, ma=0.4)
+            for (ri,r) in enumerate(cps)
+                annotate!(r, f_k.(r), text(ri, :blue, 4))
+            end
+            plot!(legend=:outerbottom, legendcolumns=2)
+            xlabel!(p, "θ")
+            ylabel!(p, "∂$vk/∂θ")
+            var_cp_data[vk_short]["plot_g"] = p
+
+            p = plot(θreg, g_k.(θreg), title="$(sys["title"]) $zk ∂²/∂θ²", xtick=pitick(-π,π,4; mode=:latex))
+            scatter!(p, cps, g_k.(cps),label="CPs", mc=:cyan, ms=5, ma=0.4)
+            for (ri,r) in enumerate(cps)
+                annotate!(r, g_k.(r), text(ri, :blue, 4))
+            end
+            plot!(legend=:outerbottom, legendcolumns=2)
+            xlabel!(p, "θ")
+            ylabel!(p, "∂²$vk/∂θ²")
+            var_cp_data[vk_short]["plot_h"] = p
         end
         sys["zones"][zk]["condensed_cp_info"] = var_cp_data
+        sys["zones"][zk]["itp"] = var_itp
+        sys["zones"][zk]["itp_k"] = var_itp_k
+        sys["zones"][zk]["g_itp"] = var_itp_g
+        sys["zones"][zk]["h_itp"] = var_itp_h
     end
 
     # Now we have all the CPs for all the INS variables of all the zones.
@@ -413,30 +453,61 @@ function sphere_slice_analysis(file_path, zero_theta_vec; smoothing_factor=1, va
         end
     end
     df = DataFrame(cp_info)
-    sys["condensed_cp_dataframe_ktched"] = df
-    CSV.write("$(sys["title"]) matched CPs smoothing n=$smoothing_factor.csv",df)
+    sys["condensed_cp_dataframe_matched"] = df
+    CSV.write("$(sys["title"]) matched CPs$smoothing_str.csv",df)
 
     # now all cps for each zone, and plots
     cp_info = Dict()
     for (zk,zv) in sys["zones"]
         if "condensed_cp_info" in keys(zv)
             for (vk, vv) in zv["condensed_cp_info"]
-                for cp in vv["cp_info"]
-                    for (var_name,value) in cp
-                        if var_name in keys(cp_info)
-                            push!(cp_info[var_name], value)
-                        else
-                            cp_info[var_name] = [value]
+                plot_file_suffix = "$smoothing_str.pdf"
+                plots_keys = [
+                    ("plot_f", "itp", "$(sys["title"]) condensed CPs zone $zk var $vk"),
+                    ("plot_g", "g_itp", "$(sys["title"]) condensed CPs zone $zk var $vk first deriv"),
+                    ("plot_h", "h_itp", "$(sys["title"]) condensed CPs zone $zk var $vk second deriv"),
+                ]
+                for (pk, itp, ppath) in plots_keys
+                    savefig(vv[pk], "$ppath$plot_file_suffix")
+                    # then zoomed versions at cps
+                    old_xlims = xlims(vv[pk])
+                    old_ylims = ylims(vv[pk])
+                    theta_last = -4π/8
+                    for (cpi,cp) in enumerate(vv["cp_info"])
+                        for (var_name,value) in cp
+                            if var_name in keys(cp_info)
+                                push!(cp_info[var_name], value)
+                            else
+                                cp_info[var_name] = [value]
+                            end
+                        end
+                        if cp["theta"] < 4π/8 && cp["theta"] - theta_last >= π/8
+                            try
+                                new_xlims = (max(old_xlims[1],cp["theta"] - π/6), min(old_xlims[2], cp["theta"] + π/6))
+                                test_vals = [zv[itp][var_check_str * vk](i) for i in new_xlims[1]:(new_xlims[2]-new_xlims[1])/200:new_xlims[2]]
+                                new_ylims = (minimum(test_vals), maximum(test_vals))
+                                buffer = (new_ylims[2] - new_ylims[1]) / 20
+                                new_ylims = (new_ylims[1] - buffer, new_ylims[2] + buffer)
+                                xlims!(vv[pk], new_xlims)
+                                ylims!(vv[pk], new_ylims)
+                                xticks!(vv[pk], pitick(new_xlims[1],new_xlims[2],16; mode=:latex))
+                                savefig(vv[pk], "$(replace(ppath, "condensed CPs " => "")) condensed CP $cpi$plot_file_suffix")
+                                theta_last = cp["theta"]
+                            catch e
+                                @error "error printing subplot"
+                            end
                         end
                     end
+                    xlims!(vv[pk], old_xlims)
+                    ylims!(vv[pk], old_ylims)
+                    xticks!(vv[pk], pitick(-π,π,4; mode=:latex))
                 end
-                savefig(vv["plot"], "$(sys["title"]) condensed CPs zone $zk var $vk smoothing n=$smoothing_factor.pdf")
             end
         end
     end
     df = DataFrame(cp_info)
     sys["condensed_cp_dataframe_all"] = df
-    CSV.write("$(sys["title"]) CPs smoothing n=$smoothing_factor.csv",df)
+    CSV.write("$(sys["title"]) CPs$smoothing_str.csv",df)
 
     return sys
 end
