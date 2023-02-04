@@ -54,12 +54,12 @@ The process is as follows:
 * One set of plots, one per DGB-condensed variable, showing all critical points over (almost) the full range [-π,π]
 * Matching sets showing the first and second derivatives.
 
-![](docs/out_plots1.jpg)
+![](docs/out_plots1.png)
 ***Figure 2.** Output plots with full 2π range.*
 
 * Additional plots of that same data, but zoomed in at CP locations to better show function character
 
-![](docs/out_plots2.jpg)
+![](docs/out_plots2.png)
 ***Figure 2.** Output plots with full 2π range.*
 
 * One `.csv` file containing only "matched" CPs that coincide with two or more sphere-slice intersections
