@@ -34,7 +34,7 @@ The process is as follows:
   2. Use `Data—>Extract—>Slices...`, selecting `All active slice groups`, a connected zone for each `slice`, and save to `I-ordered if possible`.
 2. Repeat steps 1 and 2 for each slice you need to extract sufficient to capture all CPs on the sphere. *Note that coincident CPs, that is, CPs coincident with two or more sphere-slice intersections, will appear in a separate output CSV file for convenience. For that reason, it intended for you to "target" each CP of interest by extracting a pair of slices that cross the CP, such as in figure 1 below.* 
 
-![DGB-condensed kinetic energy density and sphere-slice intersections in FCC Ag](docs/Ag_planes_PT.jpg)
+![DGB-condensed kinetic energy density and sphere-slice intersections in FCC Ag](docs/Ag_planes.png)
 ***Figure 1.** DGB-condensed kinetic energy density in FCC Ag with three sphere-slice intersections shown and labeled.* 
 
 
