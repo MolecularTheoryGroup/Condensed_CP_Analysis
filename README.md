@@ -32,6 +32,7 @@ The process is as follows:
 1. Extract sphere-slice intersections.
   1. Once you have a slice defined for a particular sphere-slice intersection, and the sphere zone to be intersected is the only zone active, and the first zone in the list of zones is a sphere zone, then you should be able to see the sphere-slice intersection that will be extracted. Then, you can
   2. Use `Data—>Extract—>Slices...`, selecting `All active slice groups`, a connected zone for each `slice`, and save to `I-ordered if possible`.
+  3. Use the `Data—>Data Set Info` dialog to rename the newly created slice. **All slices in a given system must have a unique name.**
 2. Repeat steps 1 and 2 for each slice you need to extract sufficient to capture all CPs on the sphere. *Note that coincident CPs, that is, CPs coincident with two or more sphere-slice intersections, will appear in a separate output CSV file for convenience. For that reason, it intended for you to "target" each CP of interest by extracting a pair of slices that cross the CP, such as in figure 1 below.* 
 
 ![DGB-condensed kinetic energy density and sphere-slice intersections in FCC Ag](docs/Ag_planes.png)
@@ -45,7 +46,7 @@ The process is as follows:
  2. Navigate to where you extracted the contents of this package archive `cd("/path/to/Condensed_CP_Analysis")`
  3. Now activate the `Condensed_CP_Analysis` "package" by first entering the Julia `Pkg` environment by pressing `]` (right bracket), and then entering `activate .`
  4. Exit the `Pkg` environment by pressing backspace.
- 5. Now run the analysis on the included example data with `sys = Condensed_CP_Analysis["/path/to/Condensed_CP_Analysis/data/AgSphereSlices.dat", spacing=π/50]`
+ 5. Now run the analysis on the included example data with `sys = Condensed_CP_Analysis.sphere_slice_analysis("/path/to/Condensed_CP_Analysis/data/AgSphereSlices.dat", spacing=π/50)`
 
 
 ### 3. Results

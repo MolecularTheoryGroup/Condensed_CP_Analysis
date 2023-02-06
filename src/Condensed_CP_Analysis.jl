@@ -249,7 +249,8 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
         θ = θ[ind]
         order = sortperm(θ)
         θ = θ[order]
-        θreg = θ[1] : spacing : θ[end]
+        θreg = -π : spacing : π
+        θreg_padded = -π : spacing : 3π
         plot_spacing = π/500
         θreg_plot = θ[1]+9plot_spacing : π/500 : θ[end]-9plot_spacing
 
@@ -257,9 +258,15 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
         xyz_of_theta = []
         for vk in ["X","Y","Z"]
             vv = zv["variables"][vk]
-            itp_gridded = interpolate((θ,), vv[order], Gridded(Linear()))
-            v = [itp_gridded[th] for th in θreg]
-            itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
+            θtmp = []
+            vtmp = []
+            for offset in [-2π, 0, 2π]
+                θtmp = vcat(θtmp, θ .+ offset)
+                vtmp = vcat(vtmp, vv[order])
+            end
+            itp_gridded = interpolate((θtmp,), vtmp, Gridded(Linear()))
+            v = [itp_gridded[th] for th in θreg_padded]
+            itp_cubic = scale(interpolate(v, BSpline(Cubic(Periodic(OnGrid())))), θreg_padded)
             push!(xyz_of_theta, itp_cubic)
         end
         var_cp_data = Dict()
@@ -278,19 +285,25 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
             vk_short = replace(vk, var_check_str => "")
 
             var_cp_data[vk_short] = Dict()
-
+            
+            θtmp = Vector{Float32}()
+            vtmp = Vector{Float32}()
+            for offset in [-2π, 0, 2π]
+                θtmp = vcat(θtmp, θ .+ offset)
+                vtmp = vcat(vtmp, vv[order])
+            end
             # first interpolate to regular grid, then use higher order interpolation for derivatives
-            itp_gridded = interpolate((θ,), vv[order], Gridded(Linear()))
+            itp_gridded = interpolate((θtmp,), vtmp, Gridded(Linear()))
             # itp_k_gridded = interpolate((θ,), movmean(vv[order], max(1, smoothing_factor)), Gridded(Linear()))
-            itp_k_gridded = interpolate((θ,), imfilter(vv[order], ImageFiltering.Kernel.gaussian((max(0,smoothing_factor),))), Gridded(Linear()))
+            itp_k_gridded = interpolate((θtmp,), imfilter(vtmp, ImageFiltering.Kernel.gaussian((max(0,smoothing_factor),))), Gridded(Linear()))
             # function values on regular grid
-            v = [itp_gridded[th] for th in θreg]
-            v_k = [itp_k_gridded[th] for th in θreg]
+            v = [itp_gridded[th] for th in θreg_padded]
+            v_k = [itp_k_gridded[th] for th in θreg_padded]
             # quadratic and cubic interpolators using the interpolated grid values
-            itp_quadratic = scale(interpolate(v, BSpline(Quadratic(Flat(OnGrid())))), θreg)
-            itp_cubic = scale(interpolate(v, BSpline(Cubic(Flat(OnGrid())))), θreg)
-            itp_k_quadratic = scale(interpolate(v_k, BSpline(Quadratic(Flat(OnGrid())))), θreg)
-            itp_k_cubic = scale(interpolate(v_k, BSpline(Cubic(Flat(OnGrid())))), θreg)
+            itp_quadratic = scale(interpolate(v, BSpline(Quadratic(Periodic(OnGrid())))), θreg_padded)
+            itp_cubic = scale(interpolate(v, BSpline(Cubic(Periodic(OnGrid())))), θreg_padded)
+            itp_k_quadratic = scale(interpolate(v_k, BSpline(Quadratic(Periodic(OnGrid())))), θreg_padded)
+            itp_k_cubic = scale(interpolate(v_k, BSpline(Cubic(Periodic(OnGrid())))), θreg_padded)
             # print some values and compare the interpolation error
             for i in 5:length(θ)÷3:length(θ)-5
                 θmid = (θ[i] + θ[mod1(i+1, end)]) / 2
@@ -314,7 +327,7 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
             var_itp_g[vk] = f_k
             var_itp_h[vk] = g_k
             @debug "test grad hess" f(0) f_k(0) g(0) g_k(0)
-            cps = find_zeros(f_k, -3, 3)
+            cps = find_zeros(f_k, -π, π)
             @debug "Zeros" cps
 
             # save CP data and derivative values
