@@ -1,5 +1,5 @@
 # DGB-condensed CP analysis
-##### Feb 3, 2023
+##### Feb 6, 2023
 ##### By Tim Wilson
 
 This tool finds critical points of differential gradient bundle (DGB) condensed functions, which are two-dimensional, periodic functions mapped onto the elements of a triangulated sphere mesh.
