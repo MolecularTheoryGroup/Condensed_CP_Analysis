@@ -488,7 +488,7 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
                 ]
                 for (pk, itp, ppath) in plots_keys
                     if pk ∉ keys(vv)
-                        @info "Skipping plot $ppath, variable $vk because plot wastn't found"
+                        @info "Skipping plot $ppath, variable $vk because plot wasn't found"
                         continue
                     end
                     savefig(vv[pk], "$ppath$plot_file_suffix")
