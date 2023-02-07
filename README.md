@@ -44,7 +44,7 @@ The process is as follows:
 1. After having [installed the Julia Programming Language](https://julialang.org/downloads/), open a Julia terminal ([REPL](https://docs.julialang.org/en/v1/stdlib/REPL/)):
    * (For the purposes of using this tool, it is sufficient to use Julia from command line, but I recommend getting [Visual Studio Code](https://code.visualstudio.com/download) with the [Julia extension](https://code.visualstudio.com/docs/languages/julia) which provides the ability to work with Julia from terminal, scripts, or Jupyter notebooks with built-in plotting, debugging, and profiling capabilities)
  2. Navigate to where you extracted the contents of this package archive `cd("/path/to/Condensed_CP_Analysis")`
- 3. Now activate the `Condensed_CP_Analysis` "package" by first entering the Julia `Pkg` environment by pressing `]` (right bracket), and then entering `activate .`
+ 3. Now activate the `Condensed_CP_Analysis` "package" by first entering the Julia `Pkg` environment by pressing `]` (right bracket), and then entering `activate .` followed by `instantiate`.
  4. Exit the `Pkg` environment by pressing backspace.
  5. Now run the analysis on the included example data with `sys = Condensed_CP_Analysis.sphere_slice_analysis("/path/to/Condensed_CP_Analysis/data/AgSphereSlices.dat", spacing=π/50)`
 
