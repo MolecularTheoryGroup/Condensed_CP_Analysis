@@ -250,7 +250,7 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
         order = sortperm(θ)
         θ = θ[order]
         θreg = -π : spacing : π
-        θreg_padded = -π : spacing : 3π
+        θreg_padded = -2π : spacing : 2π
         plot_spacing = π/500
         θreg_plot = θ[1]+9plot_spacing : π/500 : θ[end]-9plot_spacing
 
@@ -327,7 +327,13 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
             var_itp_g[vk] = f_k
             var_itp_h[vk] = g_k
             @debug "test grad hess" f(0) f_k(0) g(0) g_k(0)
-            cps = find_zeros(f_k, -π, π)
+            cps = nothing
+            try
+                cps = find_zeros(f_k, -π, π)
+            catch e
+                @error "Failed to run variable $vk for zone $zk. Skipping!"
+                continue
+            end
             @debug "Zeros" cps
 
             # save CP data and derivative values
@@ -481,6 +487,10 @@ function sphere_slice_analysis(file_path; smoothing_factor=0, var_check_str="INS
                     ("plot_h", "h_itp", "$(sys["title"]) condensed CPs zone $zk var $vk second deriv"),
                 ]
                 for (pk, itp, ppath) in plots_keys
+                    if pk ∉ keys(vv)
+                        @info "Skipping plot $ppath, variable $vk because plot wastn't found"
+                        continue
+                    end
                     savefig(vv[pk], "$ppath$plot_file_suffix")
                     # then zoomed versions at cps
                     old_xlims = xlims(vv[pk])
